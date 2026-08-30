@@ -1,347 +1,386 @@
 """
-Shared utilities for the BookMyShow Ticket Gallery project.
-Used by Python scraper, React app, and other components.
+Shared ticket contract: record shape, IST dates, completeness, Salesforce payload.
+
+Three locks:
+1. show_date_iso, when set, must include +05:30.
+2. Never infer year from Gmail received time. Partial dates stay raw-only.
+3. Salesforce write never maps complete: false (enforced in python-scraper).
 """
 
+from __future__ import annotations
+
 import re
-from typing import Optional, List, Dict, Tuple
 from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+IST_OFFSET = "+05:30"
+CATEGORY_MOVIE = "Movie"
+MISSING_BOOKING_PREFIX = "BMS_MISSING_"
+
+TICKET_FIELDS = (
+    "booking_id",
+    "movie_title",
+    "cinema_raw",
+    "cinema_name",
+    "city",
+    "show_date_raw",
+    "show_date_iso",
+    "seats",
+    "seat_display",
+    "quantity",
+    "amount",
+    "currency",
+    "poster_url",
+    "poster_source",
+    "blurb",
+    "source_message_id",
+    "complete",
+    "missing_fields",
+)
+
+COMPLETE_REQUIRED = ("booking_id", "movie_title", "show_date_raw")
+
+# Ollama may only merge these. Everything else is factual / parser-owned.
+OLLAMA_FIELDS = ("cinema_name", "city", "blurb")
+
+INDIAN_CITIES = {
+    "ahmedabad",
+    "bengaluru",
+    "bangalore",
+    "bhopal",
+    "chandigarh",
+    "chennai",
+    "coimbatore",
+    "delhi",
+    "noida",
+    "gurugram",
+    "gurgaon",
+    "hyderabad",
+    "indore",
+    "jaipur",
+    "kochi",
+    "kolkata",
+    "lucknow",
+    "mumbai",
+    "nagpur",
+    "pune",
+    "surat",
+    "thiruvananthapuram",
+    "vadodara",
+    "visakhapatnam",
+    "new delhi",
+    "navi mumbai",
+}
+
+INDIAN_VENUE_MARKERS = {
+    "pvr",
+    "inox",
+    "cinepolis",
+    "carnival cinemas",
+    "miraj",
+    "movietime",
+    "spi cinemas",
+    "fun cinemas",
+    "wave cinemas",
+    "mukta a2",
+    "pvr inox",
+}
 
 
-def clean_text(text: str) -> str:
-    """
-    Clean text by removing extra whitespace, newlines, and non-printable chars.
-    """
+class IncompleteTicketError(ValueError):
+    """Raised when a Salesforce payload is requested for complete: false."""
+
+
+def empty_ticket(source_message_id: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "booking_id": None,
+        "movie_title": None,
+        "cinema_raw": None,
+        "cinema_name": None,
+        "city": None,
+        "show_date_raw": None,
+        "show_date_iso": None,
+        "seats": [],
+        "seat_display": None,
+        "quantity": None,
+        "amount": None,
+        "currency": None,
+        "poster_url": None,
+        "poster_source": None,
+        "blurb": None,
+        "source_message_id": source_message_id,
+        "complete": False,
+        "missing_fields": [],
+    }
+
+
+def clean_text(text: Optional[str]) -> str:
     if not text:
         return ""
-    
-    # Replace multiple whitespace with single space
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove special characters except spaces
-    text = re.sub(r'[^\w\s@._#-]', '', text)
-    
-    return text.strip()
+    return re.sub(r"\s+", " ", str(text)).strip()
 
 
-def normalize_venue_name(venue: str) -> Tuple[str, bool]:
-    """
-    Normalize venue name by removing common suffixes.
-    Returns (normalized_name, is_changed).
-    
-    Common suffixes to remove:
-    - India, Delhi, Mumbai, Bangalore, etc. (location)
-    - Deluxe, Premium, Grand (class)
-    - at/in/The/A/An (prepositions)
-    """
-    if not venue:
-        return venue, False
-    
-    # Remove location suffixes
-    location_suffixes = [
-        ' India', ' Delhi', ' Mumbai', ' Bangalore', ' Kolkata', 
-        ' Chennai', ' Hyderabad', ' Pune', ' Jaipur', ' Ahmedabad'
-    ]
-    for suffix in location_suffixes:
-        venue = venue.rstrip(suffix).rstrip()
-    
-    # Remove class suffixes
-    class_suffixes = [
-        ' Deluxe', ' Premium', ' Grand', ' Super', ' International', ' National'
-    ]
-    for suffix in class_suffixes:
-        venue = venue.rstrip(suffix).rstrip()
-    
-    # Remove common prepositions at start
-    prepositions = ['at ', 'At ', 'in ', 'In ', 'The ', 'the ', 'a ', 'A ', 'an ', 'An ']
-    for prep in prepositions:
-        if venue.startswith(prep):
-            venue = venue[len(prep):]
-    
-    # Remove trailing hyphens
-    venue = venue.rstrip('-,;:.')
-    
-    return venue, venue != venue_original
+def placeholder_booking_id(source_message_id: str) -> str:
+    return f"{MISSING_BOOKING_PREFIX}{source_message_id}"
 
 
-def infer_category(category_hint: Optional[str]) -> str:
-    """
-    Infer event category from category hint.
-    Returns: movie, concert, sports, comedy, play, theatre, or uncategorized.
-    """
-    if not category_hint:
-        return "uncategorized"
-    
-    category_hint_lower = category_hint.lower()
-    
-    # Check in priority order
-    if 'movie' in category_hint_lower or 'film' in category_hint_lower or 'theatrical' in category_hint_lower:
-        return 'movie'
-    if 'concert' in category_hint_lower or 'live' in category_hint_lower or 'artist' in category_hint_lower:
-        return 'concert'
-    if 'sports' in category_hint_lower or 'match' in category_hint_lower or 'cricket' in category_hint_lower:
-        return 'sports'
-    if 'comedy' in category_hint_lower or 'stand-up' in category_hint_lower or 'comedian' in category_hint_lower:
-        return 'comedy'
-    if 'play' in category_hint_lower or 'theatre' in category_hint_lower or 'musical' in category_hint_lower:
-        return 'play'
-    
-    return 'uncategorized'
+def is_placeholder_booking_id(booking_id: Optional[str]) -> bool:
+    return bool(booking_id) and str(booking_id).startswith(MISSING_BOOKING_PREFIX)
 
 
-def validate_date(date_str: str) -> Tuple[bool, Optional[str]]:
-    """
-    Validate if date string is in a proper format.
-    Returns (is_valid, normalized_date).
-    
-    Accepts formats:
-    - DD/MM/YYYY
-    - MM/DD/YYYY
-    - DD-MM-YYYY
-    - YYYY-MM-DD
-    """
-    if not date_str:
-        return False, None
-    
-    # Try DD/MM/YYYY format
-    match = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$', date_str.strip())
-    if match:
-        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        if 1 <= day <= 31 and 1 <= month <= 12 and 2020 <= year <= 2099:
-            return True, f"{day}/{month}/{year}"
-    
-    # Try MM/DD/YYYY format
-    match = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{2,4})$', date_str.strip())
-    if match:
-        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        if 1 <= day <= 31 and 1 <= month <= 12 and 2020 <= year <= 2099:
-            return True, f"{month}/{day}/{year}"
-    
-    return False, None
+def apply_missing_booking_id(ticket: Dict[str, Any]) -> Dict[str, Any]:
+    source_id = ticket.get("source_message_id") or "unknown"
+    if not ticket.get("booking_id"):
+        ticket["booking_id"] = placeholder_booking_id(str(source_id))
+    return ticket
 
 
-def validate_time(time_str: str) -> bool:
-    """
-    Validate if time string is in a proper format.
-    Accepts: HH:MM, HHMM
-    """
-    if not time_str:
+def seat_display_from(seats: Optional[Sequence[str]]) -> Optional[str]:
+    if not seats:
+        return None
+    cleaned = [clean_text(s) for s in seats if clean_text(s)]
+    return ", ".join(cleaned) if cleaned else None
+
+
+def finalize_ticket(ticket: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill derived fields and completeness. Does not invent dates or years."""
+    apply_missing_booking_id(ticket)
+    seats = ticket.get("seats") or []
+    if isinstance(seats, str):
+        seats = [s.strip() for s in re.split(r"[,;]+", seats) if s.strip()]
+        ticket["seats"] = seats
+    ticket["seat_display"] = ticket.get("seat_display") or seat_display_from(seats)
+    if ticket.get("quantity") is None and seats:
+        ticket["quantity"] = len(seats)
+
+    iso = ticket.get("show_date_iso")
+    if iso:
+        if IST_OFFSET not in str(iso):
+            raise ValueError(
+                f"show_date_iso must include {IST_OFFSET}; got {iso!r}"
+            )
+        ticket["show_date_iso"] = str(iso)
+    else:
+        ticket["show_date_iso"] = None
+
+    missing: List[str] = []
+    booking_id = ticket.get("booking_id")
+    if not booking_id or is_placeholder_booking_id(booking_id):
+        missing.append("booking_id")
+    if not clean_text(ticket.get("movie_title")):
+        missing.append("movie_title")
+    if not clean_text(ticket.get("show_date_raw")):
+        missing.append("show_date_raw")
+
+    ticket["missing_fields"] = missing
+    ticket["complete"] = len(missing) == 0
+    return ticket
+
+
+def clearly_indian_venue(cinema_raw: Optional[str], city: Optional[str] = None) -> bool:
+    haystack = " ".join(
+        part for part in (cinema_raw, city) if part
+    ).lower()
+    if not haystack:
         return False
-    
-    time_str = time_str.strip()
-    
-    # HH:MM format
-    if re.match(r'^\d{1,2}:\d{2}$', time_str):
-        hours, mins = map(int, time_str.split(':'))
-        return 0 <= hours <= 23 and 0 <= mins <= 59
-    
-    # HHMM format
-    if re.match(r'^\d{4}$', time_str):
-        hours, mins = int(time_str[0:2]), int(time_str[2:4])
-        return 0 <= hours <= 23 and 0 <= mins <= 59
-    
+    if any(city_name in haystack for city_name in INDIAN_CITIES):
+        return True
+    if any(marker in haystack for marker in INDIAN_VENUE_MARKERS):
+        return True
+    if re.search(r"\bindia\b", haystack):
+        return True
     return False
 
 
-def parse_amount(amount_str: str) -> Tuple[bool, Optional[float]]:
-    """
-    Parse and validate amount string.
-    Returns (is_valid, parsed_amount).
-    
-    Accepts formats:
-    - ₹1234.56
-    - INR 1234.56
-    - Rs. 1234.56
-    """
-    if not amount_str:
-        return False, None
-    
-    # Remove currency symbols and non-numeric chars
-    cleaned = re.sub(r'[₹INRrsRsRs\.]\s*', '', amount_str.strip())
-    
-    # Extract number
-    match = re.match(r'^(\d+[,.]\d{2})$', cleaned)
-    if match:
-        try:
-            amount = float(match.group(1).replace(',', ''))
-            return True, amount
-        except ValueError:
-            pass
-    
-    return False, None
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")
+_TIME_RE = re.compile(
+    r"\b(\d{1,2})(?::(\d{2}))?\s*([AaPp][Mm])\b|\b([01]?\d|2[0-3]):([0-5]\d)\b"
+)
 
 
-def format_show_datetime(date: str, time: str) -> str:
-    """
-    Format show date and time into a single datetime string.
-    Format: DD/MM/YYYY, HH:MM AM/PM
-    """
-    if not date and not time:
-        return "Not scheduled"
-    
-    if not date:
-        return "TBD"
-    
-    result = date
-    
-    if time:
-        time = time.strip()
-        
-        # Handle 24-hour format (00-23)
-        if re.match(r'^\d{2}:\d{2}$', time):
-            parts = time.split(':')
-            hour, minute = int(parts[0]), int(parts[1])
-            
-            period = "AM" if hour < 12 else "PM"
-            if hour >= 12:
-                hour = hour - 12
-            elif hour < 12:
-                period = "AM"
-            
-            result = f"{date}, {hour:02d}:{minute:02d} {period}"
-        else:
-            result = f"{date}, {time}"
-    
-    return result
+def _has_explicit_year(raw: str) -> bool:
+    return bool(_YEAR_RE.search(raw or ""))
 
 
-def extract_year_from_date(date: str) -> Optional[int]:
+def _has_time(raw: str) -> bool:
+    return bool(_TIME_RE.search(raw or ""))
+
+
+def parse_show_date_iso(
+    show_date_raw: Optional[str],
+    cinema_raw: Optional[str] = None,
+    city: Optional[str] = None,
+    received_at: Any = None,
+) -> Optional[str]:
     """
-    Extract year from date string.
-    Returns year as integer (4-digit).
+    Convert a confident Indian movie show datetime to ISO-8601 with +05:30.
+
+    received_at is accepted so callers can pass Gmail internalDate. It is
+    ignored. Missing year, missing time, or a venue that is not clearly
+    Indian: return None and keep show_date_raw only.
     """
-    if not date:
+    del received_at  # lock 2: Gmail received time is never a year source
+    raw = clean_text(show_date_raw)
+    if not raw:
         return None
-    
-    # Match any 4-digit year in date
-    match = re.search(r'(\d{4})', date)
-    if match:
-        year = int(match.group(1))
-        if 2020 <= year <= 2099:
-            return year
-    
-    return None
+    if not _has_explicit_year(raw):
+        return None
+    if not _has_time(raw):
+        return None
+    if not clearly_indian_venue(cinema_raw, city):
+        return None
+
+    try:
+        from dateutil import parser as dateutil_parser
+    except ImportError as exc:
+        raise RuntimeError("python-dateutil is required for show_date_iso") from exc
+
+    year_in_raw = int(_YEAR_RE.search(raw).group(1))
+    # Sentinel default so a missing year cannot silently become "today" or
+    # Gmail received time. dateutil fills absent fields from default=.
+    sentinel = datetime(1900, 1, 1, 0, 0, 0)
+    try:
+        parsed = dateutil_parser.parse(raw, fuzzy=True, default=sentinel)
+    except (ValueError, OverflowError):
+        return None
+
+    if parsed is None or parsed.year == 1900:
+        return None
+    if parsed.year != year_in_raw:
+        return None
+    if parsed.year < 2000 or parsed.year > 2100:
+        return None
+
+    iso = (
+        f"{parsed.year:04d}-{parsed.month:02d}-{parsed.day:02d}"
+        f"T{parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}"
+        f"{IST_OFFSET}"
+    )
+    if IST_OFFSET not in iso:
+        raise ValueError("internal date format dropped IST offset")
+    return iso
 
 
-def get_category_color(category: str) -> str:
+def assert_iso_offset(iso: Optional[str]) -> None:
+    if iso is None:
+        return
+    if IST_OFFSET not in iso:
+        raise ValueError(f"show_date_iso missing {IST_OFFSET}: {iso!r}")
+
+
+def ticket_to_salesforce(ticket: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Get Tailwind-style color for category.
-    Used for ticket card badges and filters.
+    Map a tickets.json record to Ticket__c fields.
+
+    Raises IncompleteTicketError on complete: false. Show_Date_Text__c is
+    always set. Show_Date__c is omitted unless show_date_iso is a confident IST
+    datetime.
     """
-    colors = {
-        'movie': 'bg-purple-100 text-purple-800',
-        'concert': 'bg-pink-100 text-pink-800',
-        'sports': 'bg-green-100 text-green-800',
-        'comedy': 'bg-yellow-100 text-yellow-800',
-        'play': 'bg-blue-100 text-blue-800',
-        'theatre': 'bg-indigo-100 text-indigo-800',
-        'uncategorized': 'bg-gray-100 text-gray-600',
+    if not ticket.get("complete"):
+        raise IncompleteTicketError(
+            "cannot push complete: false; --confirm does not override"
+        )
+    if is_placeholder_booking_id(ticket.get("booking_id")):
+        raise IncompleteTicketError(
+            "cannot push placeholder booking id BMS_MISSING_*"
+        )
+
+    assert_iso_offset(ticket.get("show_date_iso"))
+
+    payload: Dict[str, Any] = {
+        "Event_Name__c": ticket.get("movie_title"),
+        "Venue__c": ticket.get("cinema_name") or ticket.get("cinema_raw"),
+        "Venue_City__c": ticket.get("city"),
+        "Show_Date_Text__c": ticket.get("show_date_raw") or "",
+        "Seats__c": ticket.get("seat_display")
+        or seat_display_from(ticket.get("seats") or []),
+        "Quantity__c": ticket.get("quantity"),
+        "Booking_Id__c": ticket.get("booking_id"),
+        "Amount__c": ticket.get("amount"),
+        "Currency__c": ticket.get("currency"),
+        "Poster_URL__c": ticket.get("poster_url"),
+        "Source_Message_Id__c": ticket.get("source_message_id"),
+        "Category__c": CATEGORY_MOVIE,
     }
-    
-    return colors.get(category, colors['uncategorized'])
+
+    iso = ticket.get("show_date_iso")
+    if iso:
+        payload["Show_Date__c"] = iso
+    # else leave Show_Date__c out entirely rather than guess
+
+    return {key: value for key, value in payload.items() if value is not None}
 
 
-def get_category_icon(category: str) -> str:
-    """
-    Get category icon/emoji for visual display.
-    """
-    icons = {
-        'movie': '🎬',
-        'concert': '🎸',
-        'sports': '⚽',
-        'comedy': '🎤',
-        'play': '🎭',
-        'theatre': '🎭',
-        'uncategorized': '❓',
-    }
-    
-    return icons.get(category, '❓')
+def sample_payload_fields() -> List[str]:
+    return [
+        "Event_Name__c",
+        "Venue__c",
+        "Show_Date__c",
+        "Show_Date_Text__c",
+        "Seats__c",
+        "Booking_Id__c",
+        "Amount__c",
+        "Currency__c",
+        "Category__c",
+    ]
 
 
-def truncate_string(text: str, max_length: int = 50) -> str:
-    """
-    Truncate string to max length, adding ellipsis if needed.
-    """
-    if not text or len(text) <= max_length:
-        return text
-    
-    return text[:max_length - 3] + '...'
+def merge_ollama_enrichment(
+    ticket: Dict[str, Any], enrichment: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Copy cinema_name, city, blurb only. Discard anything else."""
+    if not enrichment or not isinstance(enrichment, dict):
+        return ticket
+    for field in OLLAMA_FIELDS:
+        value = enrichment.get(field)
+        if value is None:
+            continue
+        text = clean_text(str(value))
+        if text:
+            ticket[field] = text
+    return ticket
 
 
-def group_tickets_by_date(tickets: List[Dict]) -> Dict[str, List[Dict]]:
-    """
-    Group tickets by show date.
-    """
-    grouped = {}
+def strip_for_tableau(tickets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop booking IDs, exact seats, and Gmail message IDs."""
+    rows = []
     for ticket in tickets:
-        date = ticket.get('show_date')
-        if date:
-            grouped[date] = grouped.get(date, [])
-            grouped[date].append(ticket)
-        else:
-            grouped['TBD'] = grouped.get('TBD', [])
-            grouped['TBD'].append(ticket)
-    
-    return grouped
+        iso = ticket.get("show_date_iso")
+        year = None
+        month = None
+        if iso and len(iso) >= 7:
+            year = iso[:4]
+            month = iso[:7]
+        elif ticket.get("show_date_raw"):
+            year_match = _YEAR_RE.search(ticket["show_date_raw"])
+            if year_match:
+                year = year_match.group(1)
+        rows.append(
+            {
+                "movie_title": ticket.get("movie_title"),
+                "cinema_name": ticket.get("cinema_name") or ticket.get("cinema_raw"),
+                "city": ticket.get("city"),
+                "year": year,
+                "month": month,
+                "quantity": ticket.get("quantity"),
+                "amount": ticket.get("amount"),
+                "currency": ticket.get("currency"),
+                "poster_url": ticket.get("poster_url"),
+            }
+        )
+    return rows
 
 
-def group_tickets_by_venue(tickets: List[Dict]) -> Dict[str, List[Dict]]:
-    """
-    Group tickets by venue.
-    """
-    grouped = {}
-    for ticket in tickets:
-        venue = ticket.get('venue')
-        if venue:
-            venue = venue.lower()
-            grouped[venue] = grouped.get(venue, [])
-            grouped[venue].append(ticket)
-    
-    return grouped
+def extract_year_from_iso_or_raw(ticket: Dict[str, Any]) -> Optional[str]:
+    iso = ticket.get("show_date_iso")
+    if iso and _YEAR_RE.search(iso):
+        return iso[:4]
+    raw = ticket.get("show_date_raw") or ""
+    match = _YEAR_RE.search(raw)
+    return match.group(1) if match else None
 
 
-def calculate_total_spend(tickets: List[Dict]) -> float:
-    """
-    Calculate total spend across all tickets.
-    """
-    return sum(t.get('amount_paid', 0) for t in tickets if t.get('amount_paid'))
-
-
-def get_ticket_summary(tickets: List[Dict]) -> Dict:
-    """
-    Generate summary statistics for tickets.
-    """
-    summary = {
-        'total_tickets': len(tickets),
-        'by_category': {},
-        'total_spend': 0,
-        'unique_venues': set(),
-        'date_range': {'earliest': None, 'latest': None},
-    }
-    
-    for ticket in tickets:
-        # By category
-        cat = ticket.get('category', 'uncategorized')
-        summary['by_category'][cat] = summary['by_category'].get(cat, 0) + 1
-        
-        # Total spend
-        if ticket.get('amount_paid'):
-            summary['total_spend'] += ticket['amount_paid']
-        
-        # Unique venues
-        venue = ticket.get('venue')
-        if venue:
-            summary['unique_venues'].add(venue)
-        
-        # Date range
-        date = ticket.get('show_date')
-        if date:
-            if not summary['date_range']['earliest'] or date < summary['date_range']['earliest']:
-                summary['date_range']['earliest'] = date
-            if not summary['date_range']['latest'] or date > summary['date_range']['latest']:
-                summary['date_range']['latest'] = date
-    
-    summary['unique_venues'] = len(summary['unique_venues'])
-    summary['avg_ticket_value'] = summary['total_spend'] / summary['total_tickets'] if summary['total_tickets'] > 0 else 0
-    
-    return summary
+def format_show_datetime(date: str, time: str = "") -> str:
+    """Display helper. Does not invent an ISO datetime."""
+    parts = [clean_text(date), clean_text(time)]
+    return ", ".join(p for p in parts if p) or ""
