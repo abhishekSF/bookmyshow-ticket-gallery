@@ -1,104 +1,87 @@
-"""
-Configuration management for the BookMyShow Ticket Gallery project.
-Loads settings from environment variables.
-"""
+"""Project settings from environment variables. Secrets stay in env or gitignored files."""
+
+from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
+
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
+
+SCRAPER_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRAPER_DIR.parent
+DATA_DIR = SCRAPER_DIR / "data"
+RAW_EMAIL_DIR = DATA_DIR / "raw_emails"
+FILTERED_PATH = DATA_DIR / "filtered.json"
+PARSED_PATH = DATA_DIR / "parsed.json"
+ENRICHED_PATH = DATA_DIR / "enriched.json"
+POSTERS_PATH = DATA_DIR / "with_posters.json"
+DEFAULT_TICKETS_PATH = REPO_ROOT / "react-app" / "public" / "tickets.json"
+DEFAULT_REVIEW_PATH = DATA_DIR / "review.json"
+TABLEAU_CSV_PATH = DATA_DIR / "tableau.csv"
+GMAIL_SCOPES = ("https://www.googleapis.com/auth/gmail.readonly",)
 
 
 class Settings(BaseSettings):
-    """Project settings from environment variables."""
-    
-    # Gmail API
     gmail_project_id: Optional[str] = None
     gmail_client_id: Optional[str] = None
     gmail_client_secret: Optional[str] = None
-    gmail_token_file: str = "./tokens/token.json"
+    gmail_token_file: str = str(REPO_ROOT / "tokens" / "gmail_token.json")
+    gmail_credentials_file: str = str(REPO_ROOT / "tokens" / "gmail_credentials.json")
     gmail_enabled: bool = False
-    
-    # Ollama
+
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_timeout_ms: int = 60000
-    ollama_enable: bool = False  # Must be enabled for enrichment to work
-    
-    # TMDb API
+    ollama_enable: bool = False
+
     tmdb_api_key: Optional[str] = None
-    tmdb_enable: bool = True  # Enabled for poster fallback
-    
-    # Salesforce (Headless 360)
-    sf_url: str = "https://test-dev-ed.sfdc.us"
+    tmdb_enable: bool = True
+
+    sf_url: str = "https://login.salesforce.com"
+    sf_api_version: str = "v61.0"
     sf_client_id: Optional[str] = None
     sf_client_secret: Optional[str] = None
-    sf_client_secret_username: Optional[str] = None
     sf_refresh_token: Optional[str] = None
-    sf_api_url: str = f"{sf_url}/services/data/v61.0"
-    sf_enabled: bool = False  # Must be enabled for push to work
     sf_tenant_id: Optional[str] = None
-    
-    # Application
+    sf_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("SF_ENABLE", "SF_ENABLED")
+    )
+    sf_token_file: str = str(REPO_ROOT / "tokens" / "sf_tokens.json")
+    sf_headless_360_url: str = (
+        "https://api.salesforce.com/platform/mcp/v1/platform/headless-360"
+    )
+
+    tickets_json: str = str(DEFAULT_TICKETS_PATH)
+    review_json: str = str(DEFAULT_REVIEW_PATH)
     app_name: str = "bookmyshow-ticket-gallery"
-    
+
     class Config:
-        env_file = ".env"
+        env_file = str(REPO_ROOT / ".env")
         env_file_encoding = "utf-8"
-    
+        extra = "ignore"
+
     @property
-    def is_ready(self) -> bool:
-        """Check if all enabled services are properly configured."""
-        ready = True
-        
-        if self.gmail_enabled and not self.gmail_client_id:
-            ready = False
-        if self.ollama_enable and self.ollama_url != "http://localhost:11434":
-            # Check if Ollama is reachable
-            import httpx
-            try:
-                httpx.get(self.ollama_url, timeout=2.0)
-            except:
-                ready = False
-        if self.tmdb_enable and not self.tmdb_api_key:
-            ready = False
-        if self.sf_enabled and (not self.sf_client_id or not self.sf_refresh_token):
-            ready = False
-        
-        return ready
-    
-    def print_status(self):
-        """Print configuration status for debugging."""
-        print(f"\n{'='*50}")
-        print(f"{'Configuration Status':^50}")
-        print(f"{'='*50}")
-        
-        print(f"Gmail API:          {'✓' if self.gmail_enabled else '✗'} (enabled={self.gmail_enabled})")
-        print(f"  Client ID:        {self.gmail_client_id[:20]}..." if self.gmail_client_id else "  Client ID:      NOT SET")
-        print(f"  Token file:       {self.gmail_token_file}")
-        
-        print(f"\nOllama:             {'✓' if self.ollama_enable else '✗'} (enabled={self.ollama_enable})")
-        print(f"  Model:            {self.ollama_model}")
-        print(f"  URL:              {self.ollama_url}")
-        
-        print(f"\nTMDb API:           {'✓' if self.tmdb_enable else '✗'} (enabled={self.tmdb_enable})")
-        print(f"  API Key:          {self.tmdb_api_key[:15]}..." if self.tmdb_api_key else "  API Key:       NOT SET")
-        
-        print(f"\nSalesforce:         {'✓' if self.sf_enabled else '✗'} (enabled={self.sf_enabled})")
-        print(f"  URL:              {self.sf_url}")
-        print(f"  Tenant ID:        {self.sf_tenant_id[:15]}..." if self.sf_tenant_id else "  Tenant ID:   NOT SET")
-        
-        print(f"\n{'✓ READY' if self.is_ready else '✗ NOT READY (use --force to proceed)'}")
-        print(f"{'='*50}\n")
-    
+    def tickets_path(self) -> Path:
+        return Path(self.tickets_json)
+
     @property
-    def ollama_available(self) -> bool:
-        """Check if Ollama is actually running."""
-        try:
-            import httpx
-            response = httpx.get(f"{self.ollama_url}/api/tags", timeout=2.0)
-            return response.status_code == 200
-        except:
-            return False
+    def review_path(self) -> Path:
+        return Path(self.review_json)
+
+    @property
+    def gmail_readonly_scopes(self) -> tuple[str, ...]:
+        return GMAIL_SCOPES
+
+
+def ensure_data_dirs() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_EMAIL_DIR.mkdir(parents=True, exist_ok=True)
+    Path(os.path.dirname(settings.gmail_token_file) or ".").mkdir(
+        parents=True, exist_ok=True
+    )
 
 
 settings = Settings()
+ensure_data_dirs()

@@ -5,6 +5,8 @@ tokens/
 secrets/
 **/credentials.json
 **/token.json
+**/gmail_token.json
+**/sf_tokens.json
 
 # Python
 .venv/
@@ -16,13 +18,19 @@ __pycache__/
 .mypy_cache/
 python-scraper/.cache/
 
+# Pipeline output (sample gallery file stays committed)
+python-scraper/data/raw_emails/
+python-scraper/data/filtered.json
+python-scraper/data/parsed.json
+python-scraper/data/enriched.json
+python-scraper/data/with_posters.json
+python-scraper/data/review.json
+python-scraper/data/tableau.csv
+
 # Node / Vite
 node_modules/
 react-app/dist/
 react-app/.vite/
-
-# Generated gallery data (sample stays committed as tickets.json until renamed)
-# Keep react-app/public/tickets.json for now so the gallery works on clone.
 
 # OS / editor
 .DS_Store
