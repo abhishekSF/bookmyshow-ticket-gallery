@@ -1,0 +1,32 @@
+# Secrets and local credentials
+.env
+.env.local
+tokens/
+secrets/
+**/credentials.json
+**/token.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+python-scraper/.cache/
+
+# Node / Vite
+node_modules/
+react-app/dist/
+react-app/.vite/
+
+# Generated gallery data (sample stays committed as tickets.json until renamed)
+# Keep react-app/public/tickets.json for now so the gallery works on clone.
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
