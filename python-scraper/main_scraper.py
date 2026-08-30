@@ -143,7 +143,7 @@ def cmd_export(args: argparse.Namespace) -> None:
 def cmd_dry_run(args: argparse.Namespace) -> None:
     tickets_path = Path(args.tickets) if args.tickets else settings.tickets_path
     adapter = None
-    if args.lookup:
+    if getattr(args, "lookup", False):
         from salesforce_write import build_adapter
 
         adapter = build_adapter()
@@ -186,22 +186,29 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("parse", help="Deterministic parse to the tickets.json shape")
     sub.add_parser("enrich", help="Ollama cinema_name/city/blurb only")
     sub.add_parser("posters", help="TMDb poster lookup")
-    sub.add_parser("export", help="Write tickets.json and review.json")
+    exp = sub.add_parser("export", help="Write tickets.json and review.json")
+    exp.add_argument("--tickets", help="Path to tickets.json")
+    exp.add_argument("--review", help="Path to review.json")
     dry = sub.add_parser("dry-run", help="Salesforce dry-run; no write")
+    dry.add_argument("--tickets", help="Path to tickets.json")
     dry.add_argument(
         "--lookup",
         action="store_true",
         help="Query Salesforce for existing Booking_Id__c values",
     )
     up = sub.add_parser("upsert", help="Upsert complete Ticket__c rows")
+    up.add_argument("--tickets", help="Path to tickets.json")
     up.add_argument(
         "--confirm",
         action="store_true",
         help="Required to write. Incomplete records are never pushed.",
     )
-    sub.add_parser("tableau", help="Stripped CSV: no booking IDs, seats, or message IDs")
+    tab = sub.add_parser("tableau", help="Stripped CSV: no booking IDs, seats, or message IDs")
+    tab.add_argument("--tickets", help="Path to tickets.json")
     pipe = sub.add_parser("pipeline", help="parse→enrich→posters→export→dry-run")
     pipe.add_argument("--fetch", action="store_true", help="Fetch Gmail before parse")
+    pipe.add_argument("--tickets", help="Path to tickets.json")
+    pipe.add_argument("--review", help="Path to review.json")
     return parser
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SCRAPER_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRAPER_DIR.parent
@@ -57,10 +57,12 @@ class Settings(BaseSettings):
     review_json: str = str(DEFAULT_REVIEW_PATH)
     app_name: str = "bookmyshow-ticket-gallery"
 
-    class Config:
-        env_file = str(REPO_ROOT / ".env")
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=str(REPO_ROOT / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     @property
     def tickets_path(self) -> Path:

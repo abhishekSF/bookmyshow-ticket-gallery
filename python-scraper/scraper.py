@@ -58,7 +58,7 @@ DATE_PATTERNS = [
 ]
 
 SEAT_PATTERNS = [
-    re.compile(r"(?:Seats?|Seat\s*No\.?)\s*[:\-]\s*([A-Z0-9,\s\-]+)", re.I),
+    re.compile(r"(?:Seats?|Seat\s*No\.?)\s*[:\-]\s*([^\n<]+)", re.I),
 ]
 
 AMOUNT_PATTERNS = [
@@ -109,17 +109,7 @@ def _first_match(patterns: List[re.Pattern], text: str) -> Optional[str]:
 def _parse_seats(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
-    parts = re.split(r"[,;/]| and ", raw)
-    seats = []
-    for part in parts:
-        token = clean_text(part).upper().rstrip(".")
-        if re.fullmatch(r"[A-Z]{0,2}\d{1,3}[A-Z]?", token) or re.fullmatch(
-            r"[A-Z]\d{1,2}", token
-        ):
-            seats.append(token)
-        elif re.fullmatch(r"[A-Z]{1,2}\s*\d{1,3}", token):
-            seats.append(re.sub(r"\s+", "", token))
-    return seats
+    return re.findall(r"\b([A-Z]{1,2}\d{1,3})\b", raw.upper())
 
 
 def _parse_amount(raw: Optional[str]) -> Optional[float]:
